@@ -111,6 +111,9 @@ button { font: inherit; color: inherit; }
 .other-row .text strong { display: block; font-weight: 600; }
 .other-row .text span { font-size: 15px; color: var(--muted); }
 .footnote { margin-top: 24px; font-size: 14px; color: var(--muted); }
+.footnote strong { color: var(--ink); font-weight: 600; }
+.backup-row { display: flex; gap: 10px; margin-top: 12px; }
+.backup-row .btn { flex: 1; }
 
 /* ---------- Session ---------- */
 .session-head { display: flex; align-items: center; gap: 14px; margin: 4px 0 14px; }
@@ -202,6 +205,35 @@ dialog#sheet::backdrop { background: rgba(10, 12, 14, 0.5); }
 .results li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .results li .name small { display: block; font-size: 14px; color: var(--muted); }
 
+/* ---------- Hold stopwatch ---------- */
+.chip.timer { background: transparent; color: var(--ink); }
+.chip.timer svg { width: 26px; height: 26px; }
+dialog#timer {
+  width: 100%; height: 100%; max-width: none; max-height: none; margin: 0;
+  border: none; padding: 0; background: var(--bg); color: var(--ink);
+}
+dialog#timer::backdrop { background: var(--bg); }
+.timer-body {
+  height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  padding: calc(28px + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  text-align: center;
+}
+.timer-body h2 { font-size: 22px; }
+.ring { position: relative; width: min(78vw, 320px); aspect-ratio: 1; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 7; }
+.ring .track { stroke: var(--line); }
+.ring .fill { stroke: var(--bell); stroke-linecap: round; transition: stroke 200ms; }
+.ring.passed .fill { stroke: var(--up); }
+.ring-inner { position: absolute; inset: 0; display: grid; place-content: center; }
+.ring-num { font-family: var(--display); font-weight: 700; font-size: clamp(88px, 30vw, 128px); line-height: 1; font-variant-numeric: tabular-nums; }
+.ring.ready .ring-num { color: var(--muted); }
+.ring.passed .ring-num { color: var(--up); }
+.ring-label { font-size: 17px; color: var(--muted); margin-top: 6px; }
+.ring.passed .ring-label { color: var(--up); font-weight: 600; }
+.timer-actions { width: 100%; max-width: 480px; display: grid; gap: 10px; }
+.btn.huge { min-height: 88px; font-size: 22px; border-radius: 18px; }
+
 /* ---------- Misc ---------- */
 .warning { background: var(--danger); color: #fff; border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 15px; }
 #toast {
@@ -220,6 +252,8 @@ dialog#sheet::backdrop { background: rgba(10, 12, 14, 0.5); }
 <body>
 <main id="app"></main>
 <dialog id="sheet" aria-labelledby="sheet-title"></dialog>
+<dialog id="timer" aria-labelledby="timer-title"></dialog>
+<input type="file" id="restore-input" accept=".json,application/json" hidden>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -459,6 +493,7 @@ function warningHTML() {
 let summaryIdx = null; // history index of a just-finished session to show
 
 function render() {
+  keepAwake(!!state.active);
   if (state.active) renderSession();
   else if (summaryIdx !== null && state.history[summaryIdx]) renderSummary();
   else renderHome();
@@ -546,7 +581,15 @@ function renderHome() {
       `).join("")}
     </section>
 
-    <p class="footnote">${n === 0 ? "No workouts logged yet." : `${n} workout${n === 1 ? "" : "s"} logged.`}</p>
+    <section class="footnote" aria-label="Backup">
+      <p>${n === 0 ? "No workouts logged yet." : `${n} workout${n === 1 ? "" : "s"} logged.`}
+         ${state.lastBackupAt ? ` Last backup ${relDay(state.lastBackupAt)}.` : (n ? " Not backed up yet." : "")}</p>
+      ${unbackedCount() >= 3 ? `<p><strong>${unbackedCount()} workouts since your last backup.</strong></p>` : ""}
+      <div class="backup-row">
+        <button class="btn ghost small" data-action="backup"${n ? "" : " disabled"}>Back up</button>
+        <button class="btn ghost small" data-action="restore">Restore</button>
+      </div>
+    </section>
   `;
 }
 
@@ -582,6 +625,7 @@ function renderSession() {
         </div>` : ""}
         <div class="chips">
           ${chips}
+          ${ex.unit === "sec" ? `<button class="chip timer" data-action="timer" data-ei="${ei}" aria-label="Time the next set of ${ex.name}">${STOPWATCH_ICON}</button>` : ""}
           <button class="chip add" data-action="add" data-ei="${ei}" aria-label="Add a set of ${ex.name}">+</button>
         </div>
       </li>`;
@@ -602,7 +646,7 @@ function renderSession() {
     <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}" aria-label="Sets done">
       <div style="width:${pct}%"></div>
     </div>
-    <p class="hint">Tap a set when you’ve done it. Hold a set to change the number.</p>
+    <p class="hint">Tap a set when you’ve done it. Hold a set to change the number. Use the stopwatch to time holds.</p>
     <ul class="exercises">${items}</ul>
 
     <div class="finish-bar">
@@ -733,6 +777,9 @@ app.addEventListener("click", e => {
   else if (a === "discard") discard();
   else if (a === "variant") setVariant(+btn.dataset.ei, btn.dataset.v);
   else if (a === "close-summary") { summaryIdx = null; window.scrollTo(0, 0); render(); }
+  else if (a === "timer") openTimer(+btn.dataset.ei);
+  else if (a === "backup") exportBackup();
+  else if (a === "restore") document.getElementById("restore-input").click();
 });
 
 /* =========================================================
@@ -808,6 +855,223 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
+
+/* =========================================================
+   KEEP SCREEN AWAKE (during a workout)
+   ========================================================= */
+let wakeLock = null, wakePending = false;
+async function keepAwake(on) {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    if (on && !wakeLock && !wakePending && document.visibilityState === "visible") {
+      wakePending = true;
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      const l = wakeLock; wakeLock = null; await l.release();
+    }
+  } catch (e) { /* not allowed right now; carry on */ }
+  finally { wakePending = false; }
+}
+// The browser drops the lock when the app is hidden; take it back on return.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAwake(!!state.active);
+});
+
+/* =========================================================
+   HOLD STOPWATCH
+   5-second get-ready countdown, then counts up. Beeps on go and
+   when you pass last time's value; Stop logs the seconds.
+   ========================================================= */
+const STOPWATCH_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="14" r="7.5"/><path d="M12 14V10M10 2.5h4M18.5 6.5l1.5-1.5"/></svg>`;
+const READY_SECONDS = 5;
+const RING_C = 2 * Math.PI * 52;
+const timerDlg = document.getElementById("timer");
+let timer = null, audioCtx = null;
+
+function beep(freq, dur) {
+  try {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = "sine"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+  } catch (e) {}
+}
+function buzz(pattern) { if (navigator.vibrate) navigator.vibrate(pattern); }
+
+function openTimer(ei) {
+  const se = state.active.exercises[ei];
+  const ex = exDef(state.active.workout, se.exId);
+  const si = se.sets.findIndex(st => !st.done);           // -1 means all done: this becomes an extra set
+  const target = si >= 0 ? se.sets[si].value : se.sets[se.sets.length - 1]?.value ?? ex.target;
+  const setNo = si >= 0 ? si + 1 : se.sets.length + 1;
+  const perSide = isPerSide(ex, se.variant);
+
+  // Audio must be unlocked by a tap, which this is.
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) { audioCtx = null; }
+
+  timer = { ei, si, ex, target, phase: "ready", readyEnd: Date.now() + READY_SECONDS * 1000,
+            start: null, passed: false, lastCount: null, interval: null };
+
+  timerDlg.innerHTML = `
+    <div class="timer-body">
+      <div>
+        <h2 id="timer-title">${ex.name}</h2>
+        <p class="muted">Set ${setNo}${si < 0 ? " (extra)" : ""}${perSide ? ", one side" : ""}. Last time ${target}s</p>
+      </div>
+      <div class="ring ready" id="ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="track" cx="60" cy="60" r="52"/>
+          <circle class="fill" id="ring-fill" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}"/>
+        </svg>
+        <div class="ring-inner">
+          <div class="ring-num" id="ring-num" aria-live="off">${READY_SECONDS}</div>
+          <div class="ring-label" id="ring-label">Get into position</div>
+        </div>
+      </div>
+      <div class="timer-actions">
+        <button type="button" class="btn primary huge" id="timer-main">Start now</button>
+        <button type="button" class="btn ghost" id="timer-cancel">Cancel</button>
+      </div>
+    </div>`;
+  timerDlg.showModal();
+  timer.interval = setInterval(tick, 100);
+  tick();
+}
+
+function goTimer() {
+  timer.phase = "run";
+  timer.start = Date.now();
+  beep(880, 0.35); buzz(120);
+  document.getElementById("ring").classList.remove("ready");
+  document.getElementById("ring-label").textContent = `Beat ${timer.target}s`;
+  document.getElementById("timer-main").textContent = "Stop and save";
+}
+
+function tick() {
+  if (!timer) return;
+  const now = Date.now();
+  const num = document.getElementById("ring-num");
+  const fill = document.getElementById("ring-fill");
+
+  if (timer.phase === "ready") {
+    const left = Math.ceil((timer.readyEnd - now) / 1000);
+    if (left !== timer.lastCount) {
+      timer.lastCount = left;
+      if (left > 0 && left <= 3) beep(660, 0.1);
+      num.textContent = Math.max(left, 0);
+    }
+    if (now >= timer.readyEnd) goTimer();
+    return;
+  }
+
+  const elapsed = (now - timer.start) / 1000;
+  num.textContent = Math.floor(elapsed);
+  const pct = Math.min(elapsed / Math.max(timer.target, 1), 1);
+  fill.setAttribute("stroke-dashoffset", RING_C * (1 - pct));
+  if (!timer.passed && elapsed >= timer.target) {
+    timer.passed = true;
+    beep(1047, 0.45); buzz([80, 60, 80]);
+    document.getElementById("ring").classList.add("passed");
+    document.getElementById("ring-label").textContent = "Past last time";
+  }
+}
+
+timerDlg.addEventListener("click", e => {
+  if (!timer) return;
+  if (e.target.closest("#timer-cancel")) { timerDlg.close(); return; }
+  if (e.target.closest("#timer-main")) {
+    if (timer.phase === "ready") { goTimer(); tick(); return; }
+    const value = Math.max(1, Math.floor((Date.now() - timer.start) / 1000));
+    const sets = state.active.exercises[timer.ei].sets;
+    if (timer.si >= 0) { sets[timer.si].value = value; sets[timer.si].done = true; popTarget = [timer.ei, timer.si]; }
+    else { sets.push({ value, done: true, extra: true }); popTarget = [timer.ei, sets.length - 1]; }
+    save();
+    buzz(12);
+    timerDlg.close();
+  }
+});
+// Android back button or Cancel: nothing is saved.
+timerDlg.addEventListener("close", () => {
+  if (timer) clearInterval(timer.interval);
+  timer = null;
+  render();
+});
+
+/* =========================================================
+   BACKUP AND RESTORE
+   Backups contain finished workouts only. Restore adds any
+   workouts not already on this phone; it never deletes.
+   ========================================================= */
+function unbackedCount() {
+  return state.history.length - (state.backedUpCount || 0);
+}
+function markBackedUp() {
+  state.lastBackupAt = new Date().toISOString();
+  state.backedUpCount = state.history.length;
+  save();
+  render();
+  toast("Backup saved");
+}
+async function exportBackup() {
+  const payload = { app: "kb-tracker", version: 1, exportedAt: new Date().toISOString(), history: state.history };
+  const json = JSON.stringify(payload);
+  const name = `kb-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const blob = new Blob([json], { type: "application/json" });
+
+  // Prefer the Android share sheet (save to Drive, email it to yourself, etc.).
+  try {
+    const file = new File([blob], name, { type: "application/json" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "KB Tracker backup" });
+      markBackedUp();
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // closed the share sheet
+  }
+  // Fallback: plain download to the Downloads folder.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  markBackedUp();
+}
+
+function isValidSession(x) {
+  return x && typeof x.id === "string" && ROUTINE[x.workout] && typeof x.finishedAt === "string" &&
+         Array.isArray(x.exercises) && x.exercises.every(e => e && typeof e.exId === "string" && Array.isArray(e.sets));
+}
+document.getElementById("restore-input").addEventListener("change", async e => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  let data;
+  try { data = JSON.parse(await file.text()); } catch (err) { data = null; }
+  if (!data || data.app !== "kb-tracker" || !Array.isArray(data.history)) {
+    toast("That file isn’t a KB Tracker backup");
+    return;
+  }
+  const have = new Set(state.history.map(s => s.id));
+  const incoming = data.history.filter(isValidSession).filter(s => !have.has(s.id));
+  if (!incoming.length) { toast("Nothing new in that backup"); return; }
+  const keep = state.history.length;
+  if (!confirm(`Add ${incoming.length} workout${incoming.length === 1 ? "" : "s"} from this backup? ${keep ? `Your ${keep} existing workout${keep === 1 ? "" : "s"} stay as they are.` : ""}`)) return;
+  state.history = state.history.concat(incoming).sort((a, b) => a.finishedAt.localeCompare(b.finishedAt));
+  state.backedUpCount = state.history.length;
+  if (!state.lastBackupAt || (data.exportedAt && data.exportedAt > state.lastBackupAt)) state.lastBackupAt = data.exportedAt || new Date().toISOString();
+  save();
+  render();
+  toast(`${incoming.length} workout${incoming.length === 1 ? "" : "s"} restored`);
+});
 
 /* =========================================================
    BOOT
