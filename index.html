@@ -24,6 +24,8 @@
   --bell: #E2AE12;      /* 16 kg competition-bell yellow */
   --on-bell: #1F2428;
   --danger: #A23B2A;
+  --up: #2E7A47;        /* beat last time */
+  --down: #B04E17;      /* fell short */
   --display: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", sans-serif;
   --body: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: light;
@@ -42,6 +44,8 @@
     --bell: #F0C02E;
     --on-bell: #16191C;
     --danger: #E07A63;
+    --up: #5CC184;
+    --down: #E8874E;
     color-scheme: dark;
   }
 }
@@ -170,6 +174,34 @@ dialog#sheet::backdrop { background: rgba(10, 12, 14, 0.5); }
 .sheet-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .sheet-row .btn { flex: 1; }
 
+/* ---------- Comparison with last time ---------- */
+.cmp { font-family: var(--display); font-weight: 600; font-size: 21px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cmp .vs { font-family: var(--body); font-weight: 500; font-size: 15px; color: var(--muted); margin-left: 3px; }
+.cmp.up { color: var(--up); }
+.cmp.down { color: var(--down); }
+.cmp.eq { color: var(--ink); }
+.cmp.prog, .cmp.new { color: var(--muted); }
+
+.variants { display: flex; gap: 8px; margin: -2px 0 12px; }
+.variant-btn {
+  min-height: 38px; padding: 0 14px; border-radius: 999px;
+  border: 2px solid var(--line); background: transparent;
+  font-size: 15px; font-weight: 500; cursor: pointer; touch-action: manipulation;
+}
+.variant-btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* ---------- Summary ---------- */
+.score { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0 8px; }
+.score div { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; }
+.score strong { display: block; font-family: var(--display); font-weight: 700; font-size: 46px; line-height: 1; }
+.score span { font-size: 15px; color: var(--muted); }
+.score .up strong { color: var(--up); }
+.score .down strong { color: var(--down); }
+.score-note { font-size: 15px; color: var(--muted); margin-bottom: 12px; }
+.results { list-style: none; margin: 0 0 24px; padding: 0; }
+.results li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.results li .name small { display: block; font-size: 14px; color: var(--muted); }
+
 /* ---------- Misc ---------- */
 .warning { background: var(--danger); color: #fff; border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 15px; }
 #toast {
@@ -272,11 +304,15 @@ function variantLabel(ex, variant) {
   const v = ex.variants.find(v => v.id === variant);
   return v ? v.label : null;
 }
-function metaText(ex, variant) {
-  const per = ex.unit === "sec" ? `${ex.target}s` : `${ex.target} reps`;
+function unitWord(ex) { return ex.unit === "sec" ? "seconds" : "reps"; }
+function unitShort(ex) { return ex.unit === "sec" ? "s" : ""; }
+function metaText(ex, variant, prev) {
   const side = isPerSide(ex, variant) ? " per side" : "";
-  const extra = [ex.note, variantLabel(ex, variant)].filter(Boolean).join(", ");
-  return `${ex.sets} × ${per}${side}${extra ? `. ${extra}` : ""}`;
+  let main;
+  if (!prev) main = `First time with this option. Plan ${ex.sets} × ${ex.target} ${unitWord(ex)}${side}`;
+  else if (prev.source === "plan") main = `Plan ${ex.sets} × ${ex.target} ${unitWord(ex)}${side}`;
+  else main = `Last time ${prev.sets.join(", ")} ${unitWord(ex)}${side}`;
+  return main + (ex.note ? `. ${ex.note}` : "");
 }
 function chipHTML(ex, value) {
   return ex.unit === "sec" ? `${value}<small>s</small>` : `${value}`;
@@ -299,26 +335,114 @@ function relDay(iso) {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 function lastDoneText(w) {
-  const s = lastSessionFor(w);
-  return s ? `Last done ${relDay(s.finishedAt)}` : "Not done yet";
+  for (let i = state.history.length - 1; i >= 0; i--) {
+    const s = state.history[i];
+    if (s.workout !== w) continue;
+    const r = summarise(s, i);
+    const compared = r.beat + r.matched + r.below;
+    return `Last done ${relDay(s.finishedAt)}` + (compared ? `, beat ${r.beat} of ${compared}` : "");
+  }
+  return "Not done yet";
 }
 function timeText(iso) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-/* Slice 1: every set starts at the hardcoded baseline.
-   Slice 2 will pre-fill from lastSessionFor(w) instead. */
+/* =========================================================
+   LAST TIME + COMPARISON
+   ========================================================= */
+
+/* The result to beat for one exercise: the most recent finished session
+   (before history index `beforeIdx`) where it was done with the same variant.
+   With no history, the hardcoded plan is the baseline for the default variant. */
+function getPrevious(ex, w, variant, beforeIdx) {
+  for (let i = beforeIdx - 1; i >= 0; i--) {
+    const s = state.history[i];
+    if (s.workout !== w) continue;
+    const se = s.exercises.find(e => e.exId === ex.id);
+    if (!se || (se.variant || null) !== (variant || null)) continue;
+    const vals = se.sets.filter(st => st.done).map(st => st.value);
+    if (!vals.length) continue;
+    return { sets: vals, total: vals.reduce((a, b) => a + b, 0), source: "history" };
+  }
+  if (!ex.variants || variant === ex.defaultVariant) {
+    const vals = Array(ex.sets).fill(ex.target);
+    return { sets: vals, total: ex.sets * ex.target, source: "plan" };
+  }
+  return null;
+}
+
+function lastVariantFor(w, exId) {
+  for (let i = state.history.length - 1; i >= 0; i--) {
+    const s = state.history[i];
+    if (s.workout !== w) continue;
+    const se = s.exercises.find(e => e.exId === exId);
+    if (se && se.variant) return se.variant;
+  }
+  return null;
+}
+
+/* Pre-fill today's sets with what was done last time (same variant).
+   At least the planned number of sets; more if last time had extras. */
+function prefillSets(ex, w, variant, beforeIdx) {
+  const prev = getPrevious(ex, w, variant, beforeIdx);
+  const vals = prev ? prev.sets : [];
+  const n = Math.max(ex.sets, vals.length);
+  return Array.from({ length: n }, (_, i) => ({ value: vals[i] ?? ex.target, done: false, extra: false }));
+}
+
 function newSession(w) {
+  const idx = state.history.length;
   return {
     id: Date.now().toString(36),
     workout: w,
     startedAt: new Date().toISOString(),
-    exercises: ROUTINE[w].exercises.map(ex => ({
-      exId: ex.id,
-      variant: ex.variants ? ex.defaultVariant : null,
-      sets: Array.from({ length: ex.sets }, () => ({ value: ex.target, done: false, extra: false })),
-    })),
+    exercises: ROUTINE[w].exercises.map(ex => {
+      const variant = ex.variants ? (lastVariantFor(w, ex.id) || ex.defaultVariant) : null;
+      return { exId: ex.id, variant, sets: prefillSets(ex, w, variant, idx) };
+    }),
   };
+}
+
+/* Total volume (sum of done reps or seconds) against last time.
+   status: beat | matched | below | progress (still sets to go) | new (nothing to compare) */
+function compareExercise(ex, se, w, beforeIdx, final) {
+  const cur = se.sets.filter(st => st.done).reduce((a, st) => a + st.value, 0);
+  const prev = getPrevious(ex, w, se.variant, beforeIdx);
+  if (!prev) return { cur, prev: null, status: cur ? "new" : "progress" };
+  const remaining = se.sets.some(st => !st.done);
+  let status;
+  if (cur > prev.total) status = "beat";
+  else if (cur === prev.total) status = "matched";
+  else status = (final || !remaining) ? "below" : "progress";
+  return { cur, prev, status };
+}
+
+function summarise(session, historyIdx) {
+  const r = { beat: 0, matched: 0, below: 0, new: 0, rows: [] };
+  session.exercises.forEach(se => {
+    const ex = exDef(session.workout, se.exId);
+    if (!ex) return;
+    const c = compareExercise(ex, se, session.workout, historyIdx, true);
+    if (c.status === "beat") r.beat++;
+    else if (c.status === "matched") r.matched++;
+    else if (c.status === "below") r.below++;
+    else r.new++;
+    r.rows.push({ ex, se, c });
+  });
+  return r;
+}
+
+function cmpHTML(ex, c) {
+  const u = unitShort(ex);
+  const label = { beat: "Beat last time", matched: "Matched last time", below: "Below last time",
+                  progress: "So far", new: "First time" }[c.status];
+  const aria = c.prev ? `${label}: ${c.cur} versus ${c.prev.total} ${unitWord(ex)}` : `${label}: ${c.cur} ${unitWord(ex)}`;
+  if (c.status === "beat")    return `<span class="cmp up" aria-label="${aria}">▲ ${c.cur}${u}<span class="vs">vs ${c.prev.total}${u}</span></span>`;
+  if (c.status === "matched") return `<span class="cmp eq" aria-label="${aria}">= ${c.cur}${u}</span>`;
+  if (c.status === "below")   return `<span class="cmp down" aria-label="${aria}">▼ ${c.cur}${u}<span class="vs">vs ${c.prev.total}${u}</span></span>`;
+  if (c.status === "new")     return `<span class="cmp new" aria-label="${aria}">${c.cur}${u}</span>`;
+  return `<span class="cmp prog" aria-label="${aria}">${c.cur}${u}<span class="vs">of ${c.prev ? c.prev.total + u : "?"}</span></span>`;
 }
 
 /* =========================================================
@@ -332,8 +456,50 @@ function warningHTML() {
     `<p class="warning">This browser isn’t letting the app save. Anything you log will be lost when you close it.</p>`;
 }
 
+let summaryIdx = null; // history index of a just-finished session to show
+
 function render() {
-  if (state.active) renderSession(); else renderHome();
+  if (state.active) renderSession();
+  else if (summaryIdx !== null && state.history[summaryIdx]) renderSummary();
+  else renderHome();
+}
+
+function renderSummary() {
+  const s = state.history[summaryIdx];
+  const r = summarise(s, summaryIdx);
+  const mins = Math.max(1, Math.round((new Date(s.finishedAt) - new Date(s.startedAt)) / 60000));
+  const compared = r.beat + r.matched + r.below;
+  let headline;
+  if (!compared) headline = "Baseline set. Next time you’ll have numbers to beat.";
+  else if (r.beat === compared) headline = "You beat last time on every exercise.";
+  else if (r.beat > 0) headline = `More than last time on ${r.beat} of ${compared} exercises.`;
+  else if (r.below === 0) headline = "Matched last time across the board.";
+  else headline = "Below last time this round. Same numbers to beat next time.";
+
+  app.innerHTML = `
+    ${warningHTML()}
+    <header class="session-head">
+      <span class="disc" aria-hidden="true">${s.workout}</span>
+      <div class="text">
+        <h1>Workout ${s.workout} done</h1>
+        <p class="muted">${mins} min</p>
+      </div>
+    </header>
+    <div class="score">
+      <div class="up"><strong>${r.beat}</strong><span>Beat</span></div>
+      <div><strong>${r.matched}</strong><span>Matched</span></div>
+      <div class="down"><strong>${r.below}</strong><span>Below</span></div>
+    </div>
+    <p class="score-note">${headline}${r.new ? ` ${r.new} with nothing to compare yet.` : ""}</p>
+    <ul class="results">
+      ${r.rows.map(({ ex, se, c }) => `
+        <li>
+          <span class="name">${ex.name}${variantLabel(ex, se.variant) ? `<small>${variantLabel(ex, se.variant)}</small>` : ""}</span>
+          ${cmpHTML(ex, c)}
+        </li>`).join("")}
+    </ul>
+    <button class="btn primary" data-action="close-summary">Done</button>
+  `;
 }
 
 function renderHome() {
@@ -390,6 +556,7 @@ function renderSession() {
 
   const items = s.exercises.map((se, ei) => {
     const ex = exDef(s.workout, se.exId);
+    const cmp = compareExercise(ex, se, s.workout, state.history.length, false);
     const perSide = isPerSide(ex, se.variant);
     const d = se.sets.filter(x => x.done).length;
     done += d; total += se.sets.length;
@@ -406,9 +573,13 @@ function renderSession() {
       <li class="ex">
         <div class="ex-head">
           <h2>${ex.name}</h2>
-          <span class="tally${d === se.sets.length ? " complete" : ""}">${d}/${se.sets.length}</span>
+          ${cmpHTML(ex, cmp)}
         </div>
-        <p class="meta">${metaText(ex, se.variant)}</p>
+        <p class="meta">${metaText(ex, se.variant, cmp.prev)}</p>
+        ${ex.variants ? `
+        <div class="variants" role="group" aria-label="${ex.name} option">
+          ${ex.variants.map(v => `<button class="variant-btn" data-action="variant" data-ei="${ei}" data-v="${v.id}" aria-pressed="${v.id === se.variant}">${v.label}</button>`).join("")}
+        </div>` : ""}
         <div class="chips">
           ${chips}
           <button class="chip add" data-action="add" data-ei="${ei}" aria-label="Add a set of ${ex.name}">+</button>
@@ -479,6 +650,18 @@ function addSet(ei) {
   render();
 }
 
+/* Switching variant re-loads last time's numbers for that variant,
+   unless sets have already been logged, in which case they're kept. */
+function setVariant(ei, v) {
+  const se = state.active.exercises[ei];
+  if (se.variant === v) return;
+  const ex = exDef(state.active.workout, se.exId);
+  se.variant = v;
+  if (!se.sets.some(st => st.done)) se.sets = prefillSets(ex, state.active.workout, v, state.history.length);
+  save();
+  render();
+}
+
 function finish() {
   const s = state.active;
   let done = 0, undone = 0;
@@ -496,9 +679,9 @@ function finish() {
   state.history.push(s);
   state.active = null;
   save();
+  summaryIdx = state.history.length - 1;
   window.scrollTo(0, 0);
   render();
-  toast(`Workout ${s.workout} saved`);
 }
 
 function discard() {
@@ -548,6 +731,8 @@ app.addEventListener("click", e => {
   else if (a === "add") addSet(+btn.dataset.ei);
   else if (a === "finish") finish();
   else if (a === "discard") discard();
+  else if (a === "variant") setVariant(+btn.dataset.ei, btn.dataset.v);
+  else if (a === "close-summary") { summaryIdx = null; window.scrollTo(0, 0); render(); }
 });
 
 /* =========================================================
