@@ -1,6 +1,6 @@
 // Offline support: serve from cache first, refresh the cache in the background.
 // Bump CACHE when you change index.html so phones pick up the new version.
-const CACHE = "kb-tracker-v3";
+const CACHE = "kb-tracker-v4";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
