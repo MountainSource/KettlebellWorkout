@@ -1,7 +1,11 @@
 // Offline support: serve from cache first, refresh the cache in the background.
-// Bump CACHE when you change index.html so phones pick up the new version.
-const CACHE = "kb-tracker-v4";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
+// Bump CACHE when you change any file so phones pick up the new version.
+const CACHE = "kb-tracker-v5";
+// Covers both trackers: yours at the top level, hers in /her/.
+const SHELL = [
+  "./", "./index.html", "./app.js", "./app.css", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png",
+  "./her/", "./her/index.html", "./her/manifest.webmanifest", "./her/icon-192.png", "./her/icon-512.png",
+];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
