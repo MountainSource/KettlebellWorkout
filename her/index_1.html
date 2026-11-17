@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#E7E9EA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16191C" media="(prefers-color-scheme: dark)">
+<title>Leg Day</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../app.css">
+</head>
+<body>
+<main id="app"></main>
+<dialog id="sheet" aria-labelledby="sheet-title"></dialog>
+<dialog id="timer" aria-labelledby="timer-title"></dialog>
+<input type="file" id="restore-input" accept=".json,application/json" hidden>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* =========================================================
+   HER PLAN. Edit here to change the routine.
+   unit: "reps" or "sec". target = per set; top = top of the rep range.
+   perSide: the number is per leg. warmup: a tick-off item, not tracked.
+   noPlan: no starting target (for "as long as possible").
+   ========================================================= */
+window.KB_CONFIG = {
+  id: "her",                       // keep as-is: it ties backups to this tracker
+  appName: "Leg Day",
+  equipment: "16 kg",
+  storageKey: "kbTracker.her.v1",  // keep as-is: her history is stored under this
+  swPath: "../sw.js",
+  sideWord: "leg",
+  accent: { light: "#4A90D9", dark: "#6AAEEB", on: "#14212E" },
+  routine: {
+    L: { name: "Leg day", letter: "L", exercises: [
+      { id: "wu-squat",        name: "Bodyweight Squats",       warmup: true, unit: "reps", target: 20 },
+      { id: "wu-bridge",       name: "Glute Bridges",           warmup: true, unit: "reps", target: 15 },
+      { id: "wu-donkey",       name: "Donkey Kicks",            warmup: true, unit: "reps", target: 12, perSide: true },
+      { id: "wu-hydrant",      name: "Fire Hydrants",           warmup: true, unit: "reps", target: 12, perSide: true },
+      { id: "wu-hips",         name: "Hip Circles",             warmup: true, unit: "sec",  target: 30 },
+
+      { id: "split-squat",     name: "Bulgarian Split Squat",   unit: "reps", sets: 3, target: 10, top: 12, perSide: true },
+      { id: "kb-rdl",          name: "KB Romanian Deadlift",    unit: "reps", sets: 3, target: 12, top: 15 },
+      { id: "goblet-squat",    name: "Goblet Squat",            unit: "reps", sets: 3, target: 12, top: 15 },
+      { id: "step-up",         name: "Step-up",                 unit: "reps", sets: 3, target: 10, top: 12, perSide: true },
+      { id: "weighted-bridge", name: "Weighted Glute Bridge",   note: "KB on hips", unit: "reps", sets: 3, target: 15, top: 20 },
+      { id: "donkey-kick",     name: "Donkey Kicks",            unit: "reps", sets: 3, target: 15, perSide: true },
+      { id: "side-leg-raise",  name: "Side-lying Leg Raise",    unit: "reps", sets: 3, target: 15, top: 20, perSide: true },
+      { id: "plank",           name: "Plank",                   note: "As long as you can", unit: "sec", sets: 1, target: 30, noPlan: true },
+    ]},
+  },
+};
+</script>
+<script src="../app.js"></script>
+</body>
+</html>
